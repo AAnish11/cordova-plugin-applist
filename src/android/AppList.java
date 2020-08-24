@@ -24,6 +24,11 @@ import org.json.JSONArray;
 
 import android.util.Log;
 
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.MediaStore;
+import android.app.Fragment;
+
 public class AppList extends CordovaPlugin {
 
 	private static final String LOG_TAG = "AppList";
@@ -36,22 +41,27 @@ public class AppList extends CordovaPlugin {
 	public boolean execute(String action, CordovaArgs args, final CallbackContext callbackContext) throws JSONException {
 		if ("applist".equals(action)) {
 			this.cordova.getThreadPool().execute(new Runnable() { public void run() {
-					applist(args, callbackContext);
-					} });
+				applist(args, callbackContext);
+			} });
 			return true;
-		} 
+		} else if ("scanmusic".equals(action)) {
+			this.cordova.getThreadPool().execute(new Runnable() { public void run() {
+				scanDeviceForMp3Files(args, callbackContext);
+			} });
+			return true;
+		}
 		else if ("appicon".equals(action)) {
 			this.cordova.getThreadPool().execute(new Runnable() { public void run() {
-					appicon_str(args, callbackContext);
-					} });
+				appicon_str(args, callbackContext);
+			} });
 			return true;
-		} 
+		}
 		else if ("appstart".equals(action)) {
 			this.cordova.getThreadPool().execute(new Runnable() { public void run() {
-					appstart(args, callbackContext);
-					} });
+				appstart(args, callbackContext);
+			} });
 			return true;
-		} 		
+		}
 		return false;
 	}
 
@@ -59,12 +69,12 @@ public class AppList extends CordovaPlugin {
 	 * @credit http://developer.android.com/reference/android/content/AsyncTaskLoader.html
 	 */
 
-	//U: carga lista de apps para esta instancia si no estaba	
+	//U: carga lista de apps para esta instancia si no estaba
 	private void applist_load(boolean force) {
 		if (apps!=null && !force) { return; }
 		//A: solo si no estaban cargadas
-	
-		context= this.cordova.getActivity().getApplicationContext(); 
+
+		context= this.cordova.getActivity().getApplicationContext();
 		Pm= context.getPackageManager();
 		apps = Pm.getInstalledApplications(0);
 		if (apps == null) { apps = new ArrayList<ApplicationInfo>(); }
@@ -91,9 +101,9 @@ public class AppList extends CordovaPlugin {
 						Log.w(LOG_TAG, "app not found "+pkg+" "+app.sourceDir);
 					}
 					JSONObject appInfo = new JSONObject();
-                    appInfo.put("name", label);
-                    appInfo.put("icon", getIcon(app));
-                    pkgs.put(pkg, appInfo);
+					appInfo.put("name", label);
+					appInfo.put("icon", getIcon(app));
+					pkgs.put(pkg, appInfo);
 				}
 			}
 			r.put("apps", pkgs);
@@ -109,7 +119,7 @@ public class AppList extends CordovaPlugin {
 
 	private void appicon_str(CordovaArgs args, CallbackContext callbackContext) {
 		try {
-			ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();  
+			ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
 
 			Bitmap bmp= appicon(args.getString(0));
 			bmp.compress(Bitmap.CompressFormat.PNG, 100, byteArrayOutputStream);
@@ -153,9 +163,9 @@ public class AppList extends CordovaPlugin {
 			ApplicationInfo x= apps.get(i);
 			if (pkg.equals( x.packageName )) { app= x; }
 		}
-		if (app==null) { 
+		if (app==null) {
 			Log.e(LOG_TAG,"pkg not found: "+pkg);
-			return null; 
+			return null;
 		}
 		//A: encontramos app
 
@@ -179,27 +189,74 @@ public class AppList extends CordovaPlugin {
 	}
 
 	private String getIcon(ApplicationInfo app) {
-        File mApkFile = new File(app.sourceDir);
-        if (mApkFile.exists()) {
-            Drawable mIcon = app.loadIcon(Pm);
-            if (mIcon instanceof BitmapDrawable) {
-                BitmapDrawable bitmapDrawable = (BitmapDrawable) mIcon;
-                if(bitmapDrawable.getBitmap() != null) {
-                    Bitmap bmp = bitmapDrawable.getBitmap();
-                    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-                    bmp.compress(Bitmap.CompressFormat.PNG, 100, byteArrayOutputStream);
-                    byte[] byteArray = byteArrayOutputStream .toByteArray();
-                    String encoded = Base64.encodeToString(byteArray, Base64.DEFAULT);
-                    return encoded;
-                }
-            }
-        }
-        else {
-            Log.e(LOG_TAG,"pkg file not found: "+app.packageName);
-        }
-        //A: si estaba disponible (ej. en la SD) devolvimos el icono
+		File mApkFile = new File(app.sourceDir);
+		if (mApkFile.exists()) {
+			Drawable mIcon = app.loadIcon(Pm);
+			if (mIcon instanceof BitmapDrawable) {
+				BitmapDrawable bitmapDrawable = (BitmapDrawable) mIcon;
+				if(bitmapDrawable.getBitmap() != null) {
+					Bitmap bmp = bitmapDrawable.getBitmap();
+					ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+					bmp.compress(Bitmap.CompressFormat.PNG, 100, byteArrayOutputStream);
+					byte[] byteArray = byteArrayOutputStream .toByteArray();
+					String encoded = Base64.encodeToString(byteArray, Base64.DEFAULT);
+					return encoded;
+				}
+			}
+		}
+		else {
+			Log.e(LOG_TAG,"pkg file not found: "+app.packageName);
+		}
+		//A: si estaba disponible (ej. en la SD) devolvimos el icono
 
-        return "";
-    }
+		return "";
+	}
 
+	public void scanDeviceForMp3Files(CordovaArgs args, CallbackContext callbackContext){
+		String selection = MediaStore.Audio.Media.IS_MUSIC + " != 0";
+		String[] projection = {
+				MediaStore.Audio.Media.TITLE,
+				MediaStore.Audio.Media.ARTIST,
+				MediaStore.Audio.Media.DATA,
+				MediaStore.Audio.Media.DISPLAY_NAME,
+				MediaStore.Audio.Media.DURATION
+		};
+		final String sortOrder = MediaStore.Audio.AudioColumns.TITLE + " COLLATE LOCALIZED ASC";
+		JSONArray songs= new JSONArray();
+		Cursor cursor = null;
+		try {
+			Uri uri = android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+			cursor = cordova.getActivity().getContentResolver().query(uri, projection, selection, null, sortOrder);
+
+			if( cursor != null){
+				cursor.moveToFirst();
+
+				while( !cursor.isAfterLast() ){
+					String title = cursor.getString(0);
+					String artist = cursor.getString(1);
+					String path = cursor.getString(2);
+					String displayName  = cursor.getString(3);
+					String songDuration = cursor.getString(4);
+					cursor.moveToNext();
+					if(path != null && (path.endsWith(".mp3") || path.endsWith(".m4a"))) {
+						JSONObject songInfo= new JSONObject();
+						songInfo.put("title", title);
+						songInfo.put("artist", artist);
+						songInfo.put("path", path);
+						songInfo.put("displayName", displayName);
+						songInfo.put("songDuration", songDuration);
+						songs.put(songInfo);
+					}
+				}
+
+			}
+		} catch (Exception e) {
+			Log.e("TAG", e.toString());
+		}finally{
+			if( cursor != null){
+				cursor.close();
+			}
+		}
+		callbackContext.success(songs);
+	}
 }
